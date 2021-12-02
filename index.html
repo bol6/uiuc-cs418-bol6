@@ -11,13 +11,19 @@ var shaderProgram;
 var modelview_uniform;
 var normal_uniform;
 var projection_uniform;
-var texture, texture2;
+var texture, texture2,texture3;
 var sampler_uniform;
 var sampler2_uniform;
+var sampler3_uniform;
 var teapot_vao;
 var vert_pos_attr;
 var vert_normal_attr;
-
+var textureLocation;
+var worldCameraPositionLocation;
+var worldLocation;
+var texcoordAttributeLocation;
+var texcoordAttributeLocationatan;
+var tangent_buffer;
 //
 // a default vertex shader implemented as a backquoted string variable
 //
@@ -26,20 +32,60 @@ var vs = `#version 300 es
 
 in vec3 aVertexPosition;
 in vec3 aVertexNormal;
-in vec2 aTexCoord;
+
+
 
 uniform mat4 uModelViewMatrix;
 uniform mat3 uNormalMatrix;
 uniform mat4 uProjectionMatrix;
+uniform sampler2D u_Texture_unit;
+uniform sampler2D uSampler;
 
 out vec2 vTexCoord;
-out vec3 vNormal;
+in vec2 avertexpositionatan;
+in vec3 tangent;
+out vec3 v_worldPosition;
+out vec3 v_worldNormal;
+out vec2 vN;
+out vec3 coordinate;
+in vec2 in_TextureCoord;
+out vec3  n;
+out vec3  e;
+out vec2 pass_TextureCoord;
+out vec3 pass;
+out mat3 v_Local_coordinate_system;
+out mat3 TBN;
+out vec3 vertPos;
 
 void main() {
-  vTexCoord.s = aVertexPosition.x + 0.5;
-  vTexCoord.t = aVertexPosition.y + 0.5;
 
+ 
+
+
+
+
+
+
+
+  coordinate=aVertexPosition;
+ 
+  e = normalize(vec3(uModelViewMatrix * vec4(aVertexPosition,1.0)) );
+  n = normalize( uNormalMatrix *aVertexNormal );
+  vec3 r = reflect( e, n );
+  float m = 2. * sqrt(pow( r.x, 2. ) +pow( r.y, 2. ) +pow( r.z + 1., 2. ));
+  vN = r.xy / m + .5;
+  
+  vec3 T = normalize(mat3( (uNormalMatrix)) * (tangent));
+  vec3 N2 = normalize(mat3( (uNormalMatrix)) * (aVertexNormal));
+  // T = normalize(T - dot(T, N2) * N2);
+  vec3 B = normalize(cross(N2, T));
+	TBN = transpose(mat3(T, B, N2));
+  vTexCoord=avertexpositionatan;
+
+  vec4 vertPos4 = uModelViewMatrix*vec4(aVertexPosition, 1.0);
+  vertPos = vec3(vertPos4)/vertPos4.w;
   gl_Position = uProjectionMatrix*uModelViewMatrix*vec4(aVertexPosition, 1.0);
+  
 }
 `;
 
@@ -50,20 +96,149 @@ void main() {
 var fs = `#version 300 es
 
 precision mediump float;
-    
-in vec3 vNormal;
-in vec2 vTexCoord;
+uniform mat4 uProjectionMatrix;
+in vec3 v_worldNormal;
+in vec3 v_worldPosition;
+
+in vec2 vN;
+uniform vec3 u_worldCameraPosition;
 uniform sampler2D uSampler;
 uniform sampler2D uSampler2;
-
+uniform sampler2D uSampler3;
 out vec4 outColor;
-    
-void main() {
-  vec3 illinois = vec3(texture(uSampler, vTexCoord));
-  vec3 stadium = vec3(texture(uSampler2, vTexCoord));
-  vec3 c = 0.5*illinois + 0.5*stadium;
+in vec3  n;
+in vec3  e;
+in vec3 coordinate;
+// in vec3 avertexpositionatan;
+in vec2 pass_TextureCoord;
+in vec3 pass;
+in vec2 vTexCoord;
+in mat3 TBN;
+in vec3 vertPos ;
 
-  outColor = vec4(c,1.0);
+//ref http://learnwebgl.brown37.net/10_surface_properties/texture_mapping_procedural.html
+vec4 gradient(vec2 tex_coords) {
+  float s = tex_coords[0];
+  float t = tex_coords[1];
+  vec3 red = vec3(1.0, 0.0, 0.0);
+  float percent;
+
+  percent = s;
+  return vec4(red * percent, 1.0);
+}
+
+float checkerboard(vec2 tex_coords, float scale) {
+  float s = tex_coords[0];
+  float t = tex_coords[1];
+
+  float sum = floor(s * scale) + floor(t * scale);
+  bool isEven = mod(sum,2.0)==0.0;
+  float percent = (isEven) ? 1.0 : 0.0;
+
+  return percent;
+}
+
+vec4 overlay(vec2 tex_coords) {
+  vec3 red = vec3(0.0, 0.5, 0.0);
+
+  float percent = checkerboard(tex_coords, 5.0);
+
+  return vec4(red * percent, 1.0);
+}
+// ref end
+
+
+
+
+
+
+
+
+
+
+
+
+
+//REF https://www.shadertoy.com/view/ldBGz3 and https://en.wikipedia.org/wiki/Oren%E2%80%93Nayar_reflectance_model
+float OrenNayar( in vec3 l, in vec3 n, in vec3 v, float r )
+{
+    float r2 = r*r;
+    float a = 1.0 - 0.5*(r2/(r2+0.57));
+    float b = 0.45*(r2/(r2+0.09));
+    float nl = dot(n, l);
+    float nv = dot(n, v);
+    float ga = dot(v-n*nv,n-n*nl);
+	return max(0.0,nl) * (a + b*max(0.0,ga) * sqrt((1.0-nv*nv)*(1.0-nl*nl)) / max(nl, nv));
+}
+// REF END
+
+
+
+
+
+
+
+
+
+void main() {
+
+  vec3 worldNormal = normalize(v_worldNormal);
+  vec3 eyeToSurfaceDir = normalize(v_worldPosition - u_worldCameraPosition);
+
+  vec3 direction = reflect(-eyeToSurfaceDir,worldNormal);
+  vec3 E = normalize(-e); 
+
+
+  vec3 L = normalize(vec3(1.0,2.0,1.0) -e);   
+  
+  const float PI = 3.1415926535897932384626433832795;
+  vec2 texturecoordinate=vec2(0.0,0.0);
+
+  vec3 L2 = normalize(vec3(0.0,10.0,10.0)-vertPos);
+
+  float z=coordinate.z;
+  float x=coordinate.x;
+   
+  
+  texturecoordinate.s = 1.0-(((atan(z,x)+PI)/(2.0*PI)))+0.02;
+  
+  texturecoordinate.t = coordinate.y / 0.5+0.55;
+  vec3 r = normalize(-reflect(normalize(L),normalize(n)));
+  
+  vec3 w= vec3(0.4f, 0.4f, 0.4f);
+  vec3 specular=w*pow(max(dot(r,E),0.0),20.0);
+
+  vec3 d=vec3(0.0f, 0.0f, 0.3f);
+  vec3 diffuse=0.5*(d*max(dot(n,L), 0.0));
+
+  vec2 texturecoordinate2=vec2(0.0,0.0);
+  texturecoordinate2=texturecoordinate;
+ texturecoordinate2.s=1.0-texturecoordinate2.s+0.05;
+  texturecoordinate2.t=texturecoordinate.t+1.1;
+  
+  vec3 illinois = vec3(texture(uSampler, texturecoordinate2).rgb);
+  vec3 illinois2 = vec3(texture(uSampler, texturecoordinate));
+  vec3 illinois3 = vec3(texture(uSampler3, texturecoordinate));
+
+  illinois=(illinois* 2.0 - 1.0);
+  illinois=normalize(TBN*illinois);
+
+  float lambertian=(max(dot(illinois,L), 0.0));
+
+  vec3 stadium = vec3(texture(uSampler2, vN.xy));
+  vec3 c = stadium;
+  
+
+float OrenNayardiffuse=OrenNayar(L,n,vec3(0.0),1.0);
+
+
+ outColor =  vec4( (w*lambertian),1.0)+vec4(illinois3,0.5)*vec4(stadium,0.5)+vec4(specular,1.0)+overlay(texturecoordinate)+vec4((d*OrenNayardiffuse),1.0);
+
+ //outColor = vec4( (w*lambertian),1.0);
+//outColor = overlay(texturecoordinate);
+// float lambertian2=OrenNayar(L,n,vec3(0.0),1.0);
+// outColor = vec4( (w*lambertian2),1.0);
+//outColor = vec4( (w*lambertian),1.0);
 }
 `;
 
@@ -91,7 +266,103 @@ function initwebgl() {
 
   // create a coordinate buffer of vertex positions and
   // connect it to the vertex shader positions
+
+var temp=0;
+for(i=1;i<teapot.positions.length;i += 2){
+
+  if(teapot.positions[i]>temp){
+    temp=teapot.positions[i];
+  }
+}
+var point=0;
+var arry = [];
+  for(i=0;i<teapot.positions.length;i += 3){
+    arry.push(0);
+    arry.push((teapot.positions[i+1]/ 0.5)+0.55);
+    arry.push((Math.atan2(teapot.positions[i+2],teapot.positions[i])+Math.PI)/(2*Math.PI));
+    
+    point++;
+  }
+var texcoord2D_floor_array = [];
+var tangent_floor_array = [];
+let new_vertex_array=[...teapot.positions];
+//console.log(arry);
+for(i=0;i<teapot.positions.length;i += 9){
+  edge1=new Array();
+	edge2=new Array();
+
+  deltaUV1 = new Array();
+	deltaUV2 = new Array();
+  
+  
+
+
+  tangent1 =  new Array();
+
+  edge1[0]=teapot.positions[3+i]-teapot.positions[0+i];
+	edge1[1]=teapot.positions[4+i]-teapot.positions[1+i];
+	edge1[2]=teapot.positions[5+i]-teapot.positions[2+i];
+
+	edge2[0]=teapot.positions[6+i]-teapot.positions[0+i];
+	edge2[1]=teapot.positions[7+i]-teapot.positions[1+i];
+	edge2[2]=teapot.positions[8+i]-teapot.positions[2+i];
+  
+  uv1=[arry[1+i],arry[2+i]];
+	uv2=[arry[4+i],arry[5+i]];
+	uv3=[arry[7+i],arry[8+i]];
+
+  texcoord2D_floor_array.push(uv1);
+  texcoord2D_floor_array.push(uv2);
+  texcoord2D_floor_array.push(uv3);
+  deltaUV1[0]= uv2[0]-uv1[0];
+  deltaUV1[1]= uv2[1]-uv1[1];
+
+	deltaUV2[0]= uv3[0]-uv1[0];
+	deltaUV2[1]= uv3[1]-uv1[1];
+  f = 1.0 / (deltaUV1[0] * deltaUV2[1]- deltaUV2[0]* deltaUV1[1]);
+
+  tangent1[0] = f * (deltaUV2[1] * edge1[0] - deltaUV1[1] * edge2[0])/10;
+  tangent1[1] = f * (deltaUV2[1] * edge1[1] - deltaUV1[1] * edge2[1])/10;
+  tangent1[2] = f * (deltaUV2[1] * edge1[2] - deltaUV1[1] * edge2[2])/10;
+  for(x=0;x<3;x++){
+   if(!(isFinite(tangent1[x]))){
+    tangent1[x]=1.0;
+   }
+  }
+  
+
+  tangent_floor_array.push(tangent1);
+  tangent_floor_array.push(tangent1);
+  tangent_floor_array.push(tangent1);
+
+
+   
+}
  
+  
+  //console.log(teapot.positions.length);
+  console.log(arry.length);
+  console.log(tangent_floor_array)
+  tangent_floor_array = tangent_floor_array.flat();
+  console.log(tangent_floor_array.length)
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER,
+                new Float32Array(tangent_floor_array),
+                gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(tangent_buffer);
+  gl.vertexAttribPointer(tangent_buffer, 3, gl.FLOAT, false, 0, 0);
+
+  console.log(texcoord2D_floor_array);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER,
+                new Float32Array(texcoord2D_floor_array),
+                gl.STATIC_DRAW);
+  gl.enableVertexAttribArray( texcoordAttributeLocationatan);
+  gl.vertexAttribPointer( texcoordAttributeLocationatan, 2, gl.FLOAT, false, 0, 0);
+
+
+
   gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
   gl.bufferData(gl.ARRAY_BUFFER,
                 new Float32Array(teapot.positions),
@@ -100,9 +371,12 @@ function initwebgl() {
   gl.enableVertexAttribArray(vert_pos_attr);
   gl.vertexAttribPointer(vert_pos_attr, 3, gl.FLOAT, false, 0, 0);
 
-  // create a coordinate buffer of vertex positions and
-  // connect it to the vertex shader positions
-  // but normalize the normals first
+  
+
+
+var arry2 = [];
+
+
 
   var x,y,z,d,i;
   for (i = 0; i < teapot.normals.length; i += 3) {
@@ -133,6 +407,15 @@ function initwebgl() {
                 new Uint16Array(teapot.faces),
                 gl.STATIC_DRAW);
 
+
+
+
+
+
+
+
+
+
   //
   // set up texture and sampler
   //
@@ -142,6 +425,7 @@ function initwebgl() {
 
   var sampler = gl.createSampler();
   gl.bindSampler(0, sampler);
+
 
   //
   // load texture image using webgl2fundamentals boilerplate
@@ -153,13 +437,20 @@ function initwebgl() {
                 gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 255, 255]));
 
   var image = new Image();
-  image.src = "illinois512.png";
+  image.src = "test5.jpg";
 
   image.addEventListener("load", function() {
     gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, gl.UNSIGNED_BYTE, image);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 488, 475, 0, gl.RGBA, gl.UNSIGNED_BYTE, image);
     gl.generateMipmap(gl.TEXTURE_2D);
   });
+
+//
+
+
+
+
+//
 
   //
   // set up second texture and sampler
@@ -188,6 +479,50 @@ function initwebgl() {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 256, 0, gl.RGBA, gl.UNSIGNED_BYTE, image2);
     gl.generateMipmap(gl.TEXTURE_2D);
   });
+
+
+
+
+
+
+  texture3 = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture3);
+
+  var sampler3 = gl.createSampler();
+  gl.bindSampler(2, sampler3);
+
+  //
+  // load texture image using webgl2fundamentals boilerplate
+  // initially creates just a 1x1 blue pixel as a placeholder
+  // replaced by actual texture image once loaded
+  //
+
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA,
+                gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 255, 255]));
+
+  var image3 = new Image();
+  image3.src = "p2.jpg";
+
+  image3.addEventListener("load", function() {
+    gl.bindTexture(gl.TEXTURE_2D, texture3);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 488, 475, 0, gl.RGBA, gl.UNSIGNED_BYTE, image3);
+    gl.generateMipmap(gl.TEXTURE_2D);
+  });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   //
   // set up transformation matrices
@@ -234,6 +569,14 @@ function loadshaders(vertexShaderSource,fragmentShaderSource) {
   projection_uniform = gl.getUniformLocation(shaderProgram, "uProjectionMatrix"); 
   sampler_uniform = gl.getUniformLocation(shaderProgram, "uSampler"); 
   sampler2_uniform = gl.getUniformLocation(shaderProgram, "uSampler2"); 
+  sampler3_uniform = gl.getUniformLocation(shaderProgram, "uSampler3");
+ 
+  worldCameraPositionLocation = gl.getUniformLocation(shaderProgram, "u_worldCameraPosition");
+  texcoordAttributeLocation = gl.getAttribLocation(shaderProgram, "a_texcoord");
+  texcoordAttributeLocationatan = gl.getAttribLocation(shaderProgram, "avertexpositionatan");
+  tangent_buffer= gl.getAttribLocation(shaderProgram, "tangent");
+
+
 }
 
 //
@@ -253,20 +596,33 @@ function draw(time) {
 
   normalmatrix = glMatrix.mat3.create();
   glMatrix.mat3.normalFromMat4(normalmatrix,modelview);
-
+  
   gl.useProgram(shaderProgram);
 
   gl.uniformMatrix4fv(modelview_uniform, false, modelview);
   gl.uniformMatrix3fv(normal_uniform, false, normalmatrix);
   gl.uniformMatrix4fv(projection_uniform, false, projection);
 
+
+
   gl.uniform1i(sampler_uniform,0);
   gl.uniform1i(sampler2_uniform,1);
+  gl.uniform1i(sampler3_uniform,2);
+
+
+  gl.uniform1i(textureLocation, 0);
+  gl.uniformMatrix4fv(worldLocation, false, modelview);
+  gl.uniform3fv(worldCameraPositionLocation, [0.0, 0.0, -2.0]);
+
 
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, texture);
+
   gl.activeTexture(gl.TEXTURE1);
   gl.bindTexture(gl.TEXTURE_2D, texture2);
+
+  gl.activeTexture(gl.TEXTURE2);
+  gl.bindTexture(gl.TEXTURE_2D, texture3);
 
   gl.bindVertexArray(teapot_vao);
   gl.drawElements(gl.TRIANGLES,
@@ -276,6 +632,20 @@ function draw(time) {
 
   requestAnimationFrame(draw);
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 </script>
